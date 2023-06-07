@@ -2,6 +2,8 @@ import sys, argparse, copy
 from datetime import *
 from mrtparse import *
 
+
+
 peer = None
 
 def parse_args():
@@ -34,6 +36,7 @@ def parse_args():
         'path_to_file',
         help='specify path to MRT format file')
     return p.parse_args()
+
 
 class BgpDump:
     __slots__ = [
@@ -70,63 +73,73 @@ class BgpDump:
         self.old_state = 0
         self.new_state = 0
 
-    def print_line(self, prefix, next_hop):
-        if self.ts_format == 'dump':
-            d = self.ts
-        else:
-            d = self.org_time
+    # def print_line(self, prefix, next_hop):
+    #     if self.ts_format == 'dump':
+    #         d = self.ts
+    #     else:
+    #         d = self.org_time
 
-        if self.verbose:
-            d = str(d)
-        else:
-            d = datetime.utcfromtimestamp(d).strftime('%m/%d/%y %H:%M:%S')
+    #     if self.verbose:
+    #         d = str(d)
+    #     else:
+    #         d = datetime.utcfromtimestamp(d).strftime('%m/%d/%y %H:%M:%S')
 
-        if self.pkt_num == True:
-            d = '%d|%s' % (self.num, d)
+    #     if self.pkt_num == True:
+    #         d = '%d|%s' % (self.num, d)
 
-        if self.flag == 'B' or self.flag == 'A':
-            self.output.write(
-                '%s|%s|%s|%s|%s|%s|%s|%s' % (
-                    self.type, d, self.flag, self.peer_ip, self.peer_as, prefix,
-                    self.merge_as_path(), self.origin
-                )
-            )
-            if self.verbose == True:
-                self.output.write(
-                    '|%s|%d|%d|%s|%s|%s|\n' % (
-                        next_hop, self.local_pref, self.med, self.comm,
-                        self.atomic_aggr, self.merge_aggr()
-                    )
-                )
-            else:
-                self.output.write('\n')
-        elif self.flag == 'W':
-            self.output.write(
-                '%s|%s|%s|%s|%s|%s\n' % (
-                    self.type, d, self.flag, self.peer_ip, self.peer_as,
-                    prefix
-                )
-            )
-        elif self.flag == 'STATE':
-            self.output.write(
-                '%s|%s|%s|%s|%s|%d|%d\n' % (
-                    self.type, d, self.flag, self.peer_ip, self.peer_as,
-                    self.old_state, self.new_state
-                )
-            )
+    #     if self.flag == 'B' or self.flag == 'A':
+    #         self.output.write(
+    #             '%s|%s|%s|%s|%s|%s|%s|%s' % (
+    #                 self.type, d, self.flag, self.peer_ip, self.peer_as, prefix,
+    #                 self.merge_as_path(), self.origin
+    #             )
+    #         )
+    #         if self.verbose == True:
+    #             self.output.write(
+    #                 '|%s|%d|%d|%s|%s|%s|\n' % (
+    #                     next_hop, self.local_pref, self.med, self.comm,
+    #                     self.atomic_aggr, self.merge_aggr()
+    #                 )
+    #             )
+    #         else:
+    #             self.output.write('\n')
+    #     elif self.flag == 'W':
+    #         self.output.write(
+    #             '%s|%s|%s|%s|%s|%s\n' % (
+    #                 self.type, d, self.flag, self.peer_ip, self.peer_as,
+    #                 prefix
+    #             )
+    #         )
+    #     elif self.flag == 'STATE':
+    #         self.output.write(
+    #             '%s|%s|%s|%s|%s|%d|%d\n' % (
+    #                 self.type, d, self.flag, self.peer_ip, self.peer_as,
+    #                 self.old_state, self.new_state
+    #             )
+    #         )
 
-    def print_routes(self):
-        for withdrawn in self.withdrawn:
-            if self.type == 'BGP4MP':
-                self.flag = 'W'
-            self.print_line(withdrawn, '')
-        for nlri in self.nlri:
-            if self.type == 'BGP4MP':
-                self.flag = 'A'
-            for next_hop in self.next_hop:
-                self.print_line(nlri, next_hop)
+    # def print_routes(self):
+    #     for withdrawn in self.withdrawn:
+    #         if self.type == 'BGP4MP':
+    #             self.flag = 'W'
+    #         self.print_line(withdrawn, '')
+    #     for nlri in self.nlri:
+    #         if self.type == 'BGP4MP':
+    #             self.flag = 'A'
+    #         for next_hop in self.next_hop:
+    #             self.print_line(nlri, next_hop)
 
-    def td(self, m, count):
+
+    def multiHoming(self, prefixes):
+        nlri = self.nlri[0]
+        originAS = self.as_path[-1]
+        if nlri not in prefixes:
+            prefixes[nlri] = set()
+        prefixes[nlri].add(originAS)
+
+
+
+    def td(self, m, count, prefixes):
         self.type = 'TABLE_DUMP'
         self.flag = 'B'
         self.ts = list(m['timestamp'])[0]
@@ -136,10 +149,10 @@ class BgpDump:
         self.peer_as = m['peer_as']
         self.nlri.append('%s/%d' % (m['prefix'], m['length']))
         for attr in m['path_attributes']:
-            self.bgp_attr(attr)
-        self.print_routes()
+            self.bgp_attr(attr, prefixes)
+    
 
-    def td_v2(self, m):
+    def td_v2(self, m, prefixes):
         global peer
         self.type = 'TABLE_DUMP2'
         self.flag = 'B'
@@ -168,10 +181,10 @@ class BgpDump:
                 self.as4_path = []
                 self.as4_aggr = ''
                 for attr in entry['path_attributes']:
-                    self.bgp_attr(attr)
-                self.print_routes()
+                    self.bgp_attr(attr, prefixes)
 
-    def bgp4mp(self, m, count):
+
+    def bgp4mp(self, m, count, prefixes):
         self.type = 'BGP4MP'
         self.ts = list(m['timestamp'])[0]
         self.num = count
@@ -192,7 +205,7 @@ class BgpDump:
             if list(m['bgp_message']['type'])[0] != BGP_MSG_T['UPDATE']:
                 return
             for attr in m['bgp_message']['path_attributes']:
-                self.bgp_attr(attr)
+                self.bgp_attr(attr, prefixes)
             for withdrawn in m['bgp_message']['withdrawn_routes']:
                 self.withdrawn.append(
                     '%s/%d' % (
@@ -205,9 +218,9 @@ class BgpDump:
                         nlri['prefix'], nlri['length']
                     )
                 )
-            self.print_routes()
+            # self.print_routes()
 
-    def bgp_attr(self, attr):
+    def bgp_attr(self, attr, prefixes):
         attr_t = list(attr['type'])[0]
         if attr_t == BGP_ATTR_T['ORIGIN']:
             self.origin = ORIGIN_T[list(attr['value'])[0]]
@@ -227,6 +240,7 @@ class BgpDump:
                     self.as_path.append('[%s]' % ','.join(seg['value']))
                 else:
                     self.as_path += seg['value']
+            self.multiHoming(prefixes)
         elif attr_t == BGP_ATTR_T['MULTI_EXIT_DISC']:
             self.med = attr['value']
         elif attr_t == BGP_ATTR_T['LOCAL_PREF']:
@@ -241,6 +255,7 @@ class BgpDump:
             self.next_hop = attr['value']['next_hop']
             if self.type != 'BGP4MP':
                 return
+            print("Reached here in MP_REACH_NLRI")
             for nlri in attr['value']['nlri']:
                 self.nlri.append(
                     '%s/%d' % (
@@ -292,18 +307,31 @@ def main():
     args = parse_args()
     d = Reader(args.path_to_file)
     count = 0
+    prefixes = {}
     for m in d:
         if m.err:
             continue
         b = BgpDump(args)
         t = list(m.data['type'])[0]
         if t == MRT_T['TABLE_DUMP']:
-            b.td(m.data, count)
+            b.td(m.data, count, prefixes)
         elif t == MRT_T['TABLE_DUMP_V2']:
-            b.td_v2(m.data)
+            b.td_v2(m.data, prefixes)
         elif t == MRT_T['BGP4MP']:
-            b.bgp4mp(m.data, count)
+            b.bgp4mp(m.data, count, prefixes)
         count += 1
+    
+    print(count)
+    multi_homed_prefixes = 0
+    for key, value in prefixes.items():
+        if len(value) > 1 :
+            multi_homed_prefixes += 1
+    
+    print(multi_homed_prefixes)
+    print(len(prefixes))
+    print("Percentage of Multi-Homing: {}".format(float((multi_homed_prefixes/len(prefixes)) * 100)))
+
+
 
 if __name__ == '__main__':
     main()
